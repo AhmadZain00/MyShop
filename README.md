@@ -112,7 +112,7 @@ PyInstaller — Windows executable packaging
 Inno Setup — Windows installer
 Pytest — Automated testing
 Project Structure
-MyShop/
+MyShop/ 
 │
 ├── app/
 │   ├── database/
