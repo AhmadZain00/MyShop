@@ -1,145 +1,181 @@
-MyShop
+# MyShop
 
 MyShop is a Windows desktop shop management application designed to simplify day-to-day product, inventory, category, pricing, and database management.
 
-The application provides a practical interface for managing products and stock while keeping track of price changes and inventory movements.
+The application provides a practical desktop interface for managing products and stock while maintaining records of price changes and inventory movements.
 
-Features
-Product Management
-Add new products
-Edit existing products
-Delete products
-View product details
-Search products quickly
-Search by product name, Barcode, SKU, or brand
-Filter products by category
-Filter low-stock products
-Sort product tables
+## Features
 
-The product management interface includes fields such as product name, Barcode, SKU, category, quantity, unit, sale price, and minimum stock level.
+### Product Management
 
- Category Management
-Add categories
-Rename categories
-Delete categories
-Display the number of products in each category
-Assign products to categories
+- Add new products
+- Edit existing products
+- Delete products
+- View product details
+- Search products quickly
+- Search by product name, Barcode, SKU, or brand
+- Filter products by category
+- Filter low-stock products
+- Sort product tables
 
-Categories are also available as filters throughout the product management interface.
+Product records include information such as:
 
- Inventory Management
-View current stock levels
-Identify low-stock products
-Adjust stock quantities
-Record the reason for manual stock adjustments
-Track stock changes
+- Product name
+- Barcode
+- SKU
+- Brand
+- Category
+- Quantity
+- Unit
+- Sale price
+- Minimum stock level
+- Notes
 
-The application maintains stock movement records including the previous quantity, new quantity, change amount, reason, and user responsible for the change.
+### Category Management
 
- Price Management
-View current product prices
-Apply percentage-based price increases or decreases to selected products
-Preview price changes before applying them
-Maintain a price history
-View previous and new prices
-Track the percentage of each price change
+- Add categories
+- Rename categories
+- Delete categories
+- Assign products to categories
+- Display the number of products in each category
+- Filter products by category
 
-The bulk pricing interface allows selected products to be updated using a percentage and provides a preview of the resulting prices.
+Categories are managed directly from the application and are integrated with product management.
 
- Fast Search
+### Inventory Management
 
-The main search field supports quick product lookup and is designed to work with barcode scanners operating as keyboard/HID devices.
+MyShop provides tools for monitoring and managing inventory.
+
+Features include:
+
+- View current stock levels
+- Identify low-stock products
+- Adjust stock quantities
+- Record the reason for manual stock adjustments
+- Track stock movements
+
+Stock movement records include:
+
+- Previous quantity
+- New quantity
+- Quantity change
+- Reason for the change
+- User responsible for the operation
+- Date and time
+
+### Price Management
+
+MyShop provides tools for managing product prices and maintaining a history of price changes.
+
+Features include:
+
+- View current product prices
+- Apply percentage-based price increases or decreases
+- Apply price changes to selected products
+- Preview price changes before applying them
+- Maintain price history
+- View previous and new prices
+- Track the percentage of each price change
+
+### Fast Search
+
+The main search field provides quick product lookup.
 
 Supported search fields include:
 
-Product name
-Barcode
-SKU
-Brand
-Price & Stock History
+- Product name
+- Barcode
+- SKU
+- Brand
 
-MyShop keeps historical records for important changes, including:
+The search interface is designed to work with barcode scanners operating as keyboard/HID devices.
 
-Product price changes
-Previous price
-New price
-Percentage change
-Stock movements
-Quantity before and after the movement
-Change reason
-Date/time of the operation
+### Price and Stock History
 
-The price history interface displays the product, old price, new price, percentage change, and date.
+MyShop maintains historical records for important product and inventory changes.
 
- Dashboard
+Price history includes:
 
-The main dashboard provides an overview of the shop, including:
+- Product
+- Previous price
+- New price
+- Percentage change
+- Date and time
 
-Total number of products
-Total number of categories
-Low-stock count
-Recently updated products
-Recent price changes
-Selected product information
-Excel Integration
+Stock history includes:
 
-The application includes Excel import/export functionality for working with product data.
+- Product
+- Quantity before the movement
+- Quantity after the movement
+- Quantity change
+- Reason
+- User responsible for the operation
+- Date and time
 
-This makes it possible to use existing Excel product lists and transfer product information between Excel and MyShop.
+### Dashboard
 
- Database & Backup
+The dashboard provides an overview of the shop, including:
 
-MyShop uses a local database for storing application data and includes database management and backup functionality.
+- Total number of products
+- Total number of categories
+- Low-stock count
+- Recently updated products
+- Recent price changes
+- Selected product information
 
-The project is designed as a Windows desktop application, making it suitable for environments where a local database is preferred.
+### Excel Integration
 
- Authentication & Permissions
+MyShop includes Excel import and export functionality for working with product data.
 
-The application includes user authentication and role-based access.
+This allows existing product lists to be transferred between Excel and MyShop.
+
+### Database and Backup
+
+MyShop uses a local SQLite database for application data.
+
+The application also includes database management and backup functionality.
+
+The local database approach makes MyShop suitable for environments where a local database is preferred and an external database server is not required.
+
+### Authentication and Permissions
+
+MyShop includes user authentication and role-based access.
 
 Administrative operations are protected based on the logged-in user's role.
 
-Technology Stack
+## Windows Application
 
-MyShop is built using:
+MyShop is distributed as a Windows desktop application.
 
-Python
-PySide6 — Desktop GUI
-SQLAlchemy — Database ORM
-SQLite — Local database
-OpenPyXL — Excel integration
-PyInstaller — Windows executable packaging
-Inno Setup — Windows installer
-Pytest — Automated testing
-Project Structure
-MyShop/ 
-│
-├── app/
-│   ├── database/
-│   │   ├── connection.py
-│   │   ├── migrations.py
-│   │   └── models.py
-│   │
-│   ├── services/
-│   │   ├── auth_service.py
-│   │   ├── backup_service.py
-│   │   ├── database_service.py
-│   │   ├── excel_service.py
-│   │   ├── product_service.py
-│   │   ├── stock_service.py
-│   │   └── ...
-│   │
-│   ├── ui/
-│   │   ├── dialogs.py
-│   │   └── main_window.py
-│   │
-│   └── main.py
-│
-├── tests/
-├── installer/
-├── scripts/
-│
-├── requirements.txt
-├── MyShop.spec
-├── run.py
-└── README.md
+The packaged version is built as a standalone Windows executable, so end users do not need to install Python or the project's development dependencies when using the packaged application.
+
+A Windows installer can be generated for distributing the application to end users.
+
+## Installation
+
+### Using the Windows Installer
+
+For end users, the recommended installation method is the Windows installer.
+
+1. Download the latest `MyShopSetup.exe` from the project's GitHub Releases.
+2. Run the installer.
+3. Follow the installation instructions.
+4. Launch MyShop from the Desktop shortcut or Start Menu.
+
+The installer creates the required application files and shortcuts.
+
+### Running from Source
+
+Developers can also run MyShop directly from the source code.
+
+Requirements:
+
+- Windows
+- Python 3
+- Git
+
+Create and activate a virtual environment:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
