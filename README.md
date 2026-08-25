@@ -5,7 +5,7 @@ MyShop is a Windows desktop shop management application designed to simplify day
 The application provides a practical interface for managing products and stock while keeping track of price changes and inventory movements.
 
 Features
-📦 Product Management
+Product Management
 Add new products
 Edit existing products
 Delete products
@@ -18,7 +18,7 @@ Sort product tables
 
 The product management interface includes fields such as product name, Barcode, SKU, category, quantity, unit, sale price, and minimum stock level.
 
-🗂️ Category Management
+ Category Management
 Add categories
 Rename categories
 Delete categories
@@ -27,7 +27,7 @@ Assign products to categories
 
 Categories are also available as filters throughout the product management interface.
 
-📊 Inventory Management
+ Inventory Management
 View current stock levels
 Identify low-stock products
 Adjust stock quantities
@@ -36,7 +36,7 @@ Track stock changes
 
 The application maintains stock movement records including the previous quantity, new quantity, change amount, reason, and user responsible for the change.
 
-💰 Price Management
+ Price Management
 View current product prices
 Apply percentage-based price increases or decreases to selected products
 Preview price changes before applying them
@@ -46,7 +46,7 @@ Track the percentage of each price change
 
 The bulk pricing interface allows selected products to be updated using a percentage and provides a preview of the resulting prices.
 
-🔎 Fast Search
+ Fast Search
 
 The main search field supports quick product lookup and is designed to work with barcode scanners operating as keyboard/HID devices.
 
@@ -56,7 +56,7 @@ Product name
 Barcode
 SKU
 Brand
-📋 Price & Stock History
+Price & Stock History
 
 MyShop keeps historical records for important changes, including:
 
@@ -71,7 +71,7 @@ Date/time of the operation
 
 The price history interface displays the product, old price, new price, percentage change, and date.
 
-📈 Dashboard
+ Dashboard
 
 The main dashboard provides an overview of the shop, including:
 
@@ -81,19 +81,19 @@ Low-stock count
 Recently updated products
 Recent price changes
 Selected product information
-📊 Excel Integration
+Excel Integration
 
 The application includes Excel import/export functionality for working with product data.
 
 This makes it possible to use existing Excel product lists and transfer product information between Excel and MyShop.
 
-💾 Database & Backup
+ Database & Backup
 
 MyShop uses a local database for storing application data and includes database management and backup functionality.
 
 The project is designed as a Windows desktop application, making it suitable for environments where a local database is preferred.
 
-🔐 Authentication & Permissions
+ Authentication & Permissions
 
 The application includes user authentication and role-based access.
 
