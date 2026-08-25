@@ -77,6 +77,10 @@ def import_products(path, mode="update", progress=None, cancel_check=None):
             with s.begin():
                 categories = {c.name: c for c in s.scalars(select(Category)).all()}
                 for row_number, row in enumerate(rows, start=2):
+                 # تجاهل الصفوف الفارغة بالكامل
+                    if not any(v is not None and str(v).strip() for v in row):
+                        continue
+
                     if cancel_check and cancel_check():
                         result["cancelled"] = True
                         break
