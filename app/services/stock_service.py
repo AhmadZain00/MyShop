@@ -1,12 +1,12 @@
 from decimal import Decimal
 from sqlalchemy import select
-from app.database.connection import SessionLocal
+from app.database import connection as dbconn
 from app.database.models import Product, StockMovement
 
 class StockService:
     def adjust(self, product_id, delta, reason, user_id):
         delta = Decimal(str(delta))
-        with SessionLocal.begin() as s:
+        with dbconn.SessionLocal.begin() as s:
             p = s.get(Product, product_id)
             if not p:
                 raise ValueError("المنتج غير موجود.")

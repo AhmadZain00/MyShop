@@ -1,14 +1,17 @@
 from decimal import Decimal, InvalidOperation
 from PySide6 import QtWidgets, QtCore, QtGui
 from sqlalchemy import select, func
-from app.database.connection import SessionLocal
+from app.database import connection as dbconn
 from app.database.models import Product, Category
 from app.services.product_service import ProductService, CategoryService, HistoryService
 from app.services.stock_service import StockService
-from app.services.excel_service import make_template, export_products, export_errors
+from app.services.auth_service import AuthService
+from app.services.excel_service import make_template, export_products, export_errors, export_sales
+from app.services.sales_service import SalesService, to_local
 from app.services.excel_worker import ExcelImportWorker, ExcelExportWorker
 from app.services.backup_service import backup_to, restore_from
 from app.services.database_service import inspect_database, import_database
+from app.ui.dialogs import UserDialog, ResetPasswordDialog
 
 class StatCard(QtWidgets.QFrame):
     def __init__(self, title, value="0", parent=None):
@@ -27,6 +30,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.categories = CategoryService()
         self.history = HistoryService()
         self.stock = StockService()
+        self.sales = SalesService()
+        self.auth = AuthService()
         self.current_product_id = None
         self.excel_thread = None
         self.excel_worker = None
@@ -37,6 +42,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._style()
         self._build()
         self.refresh_all()
+        # Keep the "today's sales" card and the sales tab live without manual refresh.
+        self.sales_timer = QtCore.QTimer(self)
+        self.sales_timer.setInterval(30_000)
+        self.sales_timer.timeout.connect(self.refresh_sales_today)
+        self.sales_timer.start()
 
     def _style(self):
         self.setStyleSheet("""
@@ -95,25 +105,34 @@ class MainWindow(QtWidgets.QMainWindow):
         self.price_page = QtWidgets.QWidget()
         self.stock_page = QtWidgets.QWidget()
         self.history_page = QtWidgets.QWidget()
+        self.sales_page = QtWidgets.QWidget()
         self.tools_page = QtWidgets.QWidget()
         for page, label in [
             (self.dashboard,"الرئيسية"),(self.products_page,"المنتجات"),
             (self.add_page,"إضافة منتج"),(self.categories_page,"التصنيفات"),
             (self.price_page,"تعديل الأسعار"),(self.stock_page,"المخزون"),
-            (self.history_page,"سجل الأسعار"),(self.tools_page,"Excel / Backup / Database")
+            (self.history_page,"سجل الأسعار"),(self.sales_page,"المبيعات"),
+            (self.tools_page,"Excel / Backup / Database")
         ]:
             self.tabs.addTab(page, label)
+        if self.user["role"]=="admin":
+            self.users_page = QtWidgets.QWidget()
+            self.tabs.addTab(self.users_page, "المستخدمين")
         self._dashboard_ui(); self._products_ui(); self._add_ui()
         self._categories_ui(); self._price_ui(); self._stock_ui()
-        self._history_ui(); self._tools_ui()
+        self._history_ui(); self._sales_ui(); self._tools_ui()
+        if self.user["role"]=="admin":
+            self._users_ui()
+        self.tabs.currentChanged.connect(self._tab_changed)
 
     def _dashboard_ui(self):
         l=QtWidgets.QVBoxLayout(self.dashboard)
         cards=QtWidgets.QHBoxLayout()
         self.card_products=StatCard("عدد المنتجات")
         self.card_categories=StatCard("عدد التصنيفات")
+        self.card_sales=StatCard("مبيعات اليوم (جنيه)")
         self.card_low=StatCard("مخزون منخفض")
-        for c in [self.card_products,self.card_categories,self.card_low]:
+        for c in [self.card_products,self.card_categories,self.card_sales,self.card_low]:
             cards.addWidget(c)
         l.addLayout(cards)
         box=QtWidgets.QGroupBox("بحث سريع / المنتج المحدد")
@@ -124,6 +143,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.price_big=QtWidgets.QLabel("—"); self.price_big.setObjectName("priceBig")
         self.price_big.setAlignment(QtCore.Qt.AlignCenter)
         bl.addWidget(self.product_name); bl.addWidget(self.product_details); bl.addWidget(self.price_big)
+        self.sell_btn=QtWidgets.QPushButton("💰 بيع هذا المنتج")
+        self.sell_btn.setEnabled(False)
+        self.sell_btn.clicked.connect(self.sell_selected)
+        bl.addWidget(self.sell_btn)
         l.addWidget(box)
         split=QtWidgets.QHBoxLayout()
         self.recent_products_table=self._compact_table(["المنتج","السعر","آخر تعديل"])
@@ -149,8 +172,17 @@ class MainWindow(QtWidgets.QMainWindow):
         edit=QtWidgets.QPushButton("تعديل المحدد"); edit.clicked.connect(self.edit_selected)
         delete=QtWidgets.QPushButton("حذف المحدد"); delete.clicked.connect(self.delete_selected)
         details=QtWidgets.QPushButton("عرض التفاصيل"); details.clicked.connect(self.show_selected)
-        filters.addWidget(details); filters.addWidget(edit); filters.addWidget(delete)
+        sellb=QtWidgets.QPushButton("بيع المحدد"); sellb.clicked.connect(self.sell_selected_from_table)
+        filters.addWidget(details); filters.addWidget(sellb); filters.addWidget(edit); filters.addWidget(delete)
         l.addLayout(filters)
+        if self.user["role"]=="admin":
+            danger=QtWidgets.QPushButton("حذف كل المنتجات")
+            danger.setToolTip("حذف جميع المنتجات نهائيًا، بما في ذلك سجل الأسعار وحركات المخزون")
+            danger.setStyleSheet("QPushButton { background: #c0392b; } QPushButton:hover { background: #a03024; }")
+            danger.clicked.connect(self.delete_all_products)
+            filters.addWidget(danger)
+        if self.user["role"]!="admin":
+            edit.setEnabled(False); delete.setEnabled(False)
         self.table=QtWidgets.QTableWidget(0,9)
         self.table.setHorizontalHeaderLabels(["ID","المنتج","Barcode","SKU","التصنيف","الكمية","الوحدة","سعر البيع","الحد الأدنى"])
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
@@ -236,6 +268,28 @@ class MainWindow(QtWidgets.QMainWindow):
         self.history_table.setHorizontalHeaderLabels(["المنتج","السعر القديم","السعر الجديد","نسبة التغيير","التاريخ"])
         l.addWidget(self.history_table)
 
+    def _sales_ui(self):
+        l=QtWidgets.QVBoxLayout(self.sales_page)
+        top=QtWidgets.QHBoxLayout()
+        top.addWidget(QtWidgets.QLabel("التاريخ:"))
+        self.sales_date=QtWidgets.QDateEdit(QtCore.QDate.currentDate())
+        self.sales_date.setCalendarPopup(True); self.sales_date.setDisplayFormat("yyyy-MM-dd")
+        self.sales_date.dateChanged.connect(self.refresh_sales)
+        todayb=QtWidgets.QPushButton("اليوم"); todayb.clicked.connect(self.sales_goto_today)
+        self.sales_export=QtWidgets.QPushButton("تصدير اليوم إلى Excel")
+        self.sales_export.clicked.connect(self.export_sales_excel)
+        top.addWidget(self.sales_date); top.addWidget(todayb); top.addStretch()
+        top.addWidget(self.sales_export)
+        l.addLayout(top)
+        summary=QtWidgets.QHBoxLayout()
+        self.card_sales_count=StatCard("عدد العمليات")
+        self.card_sales_total=StatCard("إجمالي اليوم","0.00 جنيه")
+        summary.addWidget(self.card_sales_count); summary.addWidget(self.card_sales_total); summary.addStretch()
+        l.addLayout(summary)
+        self.sales_table=self._compact_table(["الوقت","المنتج","الكمية","سعر الوحدة","الإجمالي"])
+        l.addWidget(self.sales_table)
+        if self.user["role"]!="admin": self.sales_export.setEnabled(False)
+
     def _tools_ui(self):
         l=QtWidgets.QVBoxLayout(self.tools_page)
         buttons=[
@@ -247,6 +301,70 @@ class MainWindow(QtWidgets.QMainWindow):
             b.setEnabled(self.user["role"]=="admin"); l.addWidget(b)
         l.addStretch()
 
+    def _users_ui(self):
+        l=QtWidgets.QVBoxLayout(self.users_page)
+        top=QtWidgets.QHBoxLayout()
+        add=QtWidgets.QPushButton("إضافة مستخدم")
+        add.clicked.connect(self.add_user)
+        top.addWidget(add); top.addStretch()
+        l.addLayout(top)
+        self.users_table=QtWidgets.QTableWidget(0,4)
+        self.users_table.setHorizontalHeaderLabels(["ID","اسم المستخدم","الدور","الحالة"])
+        self.users_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.users_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        l.addWidget(self.users_table)
+        btns=QtWidgets.QHBoxLayout()
+        reset=QtWidgets.QPushButton("إعادة تعيين كلمة المرور")
+        reset.clicked.connect(self.reset_user_password)
+        delete=QtWidgets.QPushButton("حذف المستخدم")
+        delete.setStyleSheet("QPushButton { background: #c0392b; } QPushButton:hover { background: #a03024; }")
+        delete.clicked.connect(self.delete_user)
+        btns.addWidget(reset); btns.addWidget(delete); btns.addStretch()
+        l.addLayout(btns)
+        self.refresh_users_table()
+
+    def refresh_users_table(self):
+        users=self.auth.list_users()
+        self.users_table.setRowCount(len(users))
+        for r,u in enumerate(users):
+            role_label="مدير" if u["role"]=="admin" else "موظف"
+            status="كلمة مرور مؤقتة" if u["must_change_password"] else "نشط"
+            vals=[u["id"],u["username"],role_label,status]
+            for c,v in enumerate(vals):
+                self.users_table.setItem(r,c,QtWidgets.QTableWidgetItem(str(v)))
+        self.users_table.resizeColumnsToContents()
+
+    def _selected_user(self):
+        row=self.users_table.currentRow()
+        if row<0: return None
+        return {"id":int(self.users_table.item(row,0).text()),
+                "username":self.users_table.item(row,1).text()}
+
+    def add_user(self):
+        dlg=UserDialog(self.auth,self)
+        if dlg.exec()==QtWidgets.QDialog.Accepted:
+            self.refresh_users_table()
+
+    def reset_user_password(self):
+        u=self._selected_user()
+        if not u: return
+        dlg=ResetPasswordDialog(u["id"],u["username"],self.auth,self)
+        if dlg.exec()==QtWidgets.QDialog.Accepted:
+            self.refresh_users_table()
+
+    def delete_user(self):
+        u=self._selected_user()
+        if not u: return
+        if QtWidgets.QMessageBox.question(
+                self,"تأكيد",
+                f"هل تريد حذف المستخدم '{u['username']}'؟")!=QtWidgets.QMessageBox.Yes:
+            return
+        try:
+            self.auth.delete_user(u["id"],self.user["id"])
+            self.refresh_users_table()
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self,"خطأ",str(e))
+
     def refresh_all(self):
         self.load_categories()
         self.refresh_dashboard()
@@ -254,6 +372,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_stock_table()
         self.refresh_categories_table()
         self.update_selection_count()
+        self.refresh_sales()
 
     def load_categories(self):
         cats=self.categories.all()
@@ -267,6 +386,9 @@ class MainWindow(QtWidgets.QMainWindow):
             combo.blockSignals(False)
 
     def refresh_dashboard(self):
+        t=self.sales.today_totals()
+        self.card_sales.value.setText(f"{t['total']:,.2f}")
+        self.card_sales.setToolTip(f"{t['count']} عملية بيع اليوم")
         s=self.products.stats()
         self.card_products.value.setText(str(s["products"]))
         self.card_categories.value.setText(str(s["categories"]))
@@ -281,6 +403,73 @@ class MainWindow(QtWidgets.QMainWindow):
         for r,h in enumerate(changes):
             vals=[h.product.name,f"{h.old_price:,.2f}",f"{h.new_price:,.2f}",h.changed_at.strftime("%Y-%m-%d %H:%M")]
             for c,v in enumerate(vals): self.recent_prices_table.setItem(r,c,QtWidgets.QTableWidgetItem(str(v)))
+
+    def refresh_sales_today(self):
+        t=self.sales.today_totals()
+        self.card_sales.value.setText(f"{t['total']:,.2f}")
+        self.card_sales.setToolTip(f"{t['count']} عملية بيع اليوم")
+        if self.tabs.currentWidget() is self.sales_page:
+            self.refresh_sales()
+
+    def _tab_changed(self,_idx):
+        if self.tabs.widget(_idx) is self.sales_page:
+            self.refresh_sales()
+
+    def refresh_sales(self):
+        if not hasattr(self,"sales_table"): return
+        day=self.sales_date.date().toPython()
+        rows=self.sales.sales_for_day(day.year,day.month,day.day)
+        self.sales_table.setRowCount(len(rows))
+        for r,s in enumerate(rows):
+            vals=[to_local(s.sold_at).strftime("%Y-%m-%d %H:%M"),s.product.name,
+                  f"{s.quantity:g}",f"{s.unit_price:,.2f}",f"{s.total:,.2f}"]
+            for c,v in enumerate(vals): self.sales_table.setItem(r,c,QtWidgets.QTableWidgetItem(str(v)))
+        self.sales_table.resizeColumnsToContents()
+        t=self.sales.day_totals(day.year,day.month,day.day)
+        self.card_sales_count.value.setText(str(t["count"]))
+        self.card_sales_total.value.setText(f"{t['total']:,.2f} جنيه")
+
+    def sales_goto_today(self):
+        self.sales_date.setDate(QtCore.QDate.currentDate())
+
+    def sell_selected(self):
+        self.sell_product(self.current_product_id)
+
+    def sell_selected_from_table(self):
+        rows=self.table.selectionModel().selectedRows()
+        self.sell_product(int(self.table.item(rows[0].row(),0).text()) if rows else None)
+
+    def sell_product(self,pid):
+        if pid is None:
+            QtWidgets.QMessageBox.information(self,"بيع","اختر منتجًا أولًا (امسح الباركود أو حدده من الجدول).")
+            return
+        p=self.products.get(pid)
+        if not p: return
+        if Decimal(str(p.quantity))<=0:
+            QtWidgets.QMessageBox.warning(self,"بيع",f"لا يوجد مخزون من '{p.name}'.")
+            return
+        dlg=SaleDialog(p,self)
+        if dlg.exec()!=QtWidgets.QDialog.Accepted: return
+        try:
+            sale_id,remaining=self.sales.record_sale(pid,dlg.quantity(),dlg.price(),self.user["id"])
+            QtWidgets.QMessageBox.information(self,"تم البيع",
+                f"تم بيع: {p.name}\nالكمية: {dlg.quantity():g}  |  الإجمالي: {dlg.total():,.2f} جنيه\nالمتبقي بالمخزون: {remaining:g}")
+            # Snap the sales tab to today so a window left open since yesterday
+            # doesn't keep showing an old (empty) day right after a new sale.
+            self.sales_date.setDate(QtCore.QDate.currentDate())
+            self.refresh_all()
+        except Exception as e: QtWidgets.QMessageBox.critical(self,"خطأ",str(e))
+
+    def export_sales_excel(self):
+        day=self.sales_date.date().toPython()
+        path,_=QtWidgets.QFileDialog.getSaveFileName(self,"تصدير المبيعات",
+            f"sales_{day.isoformat()}.xlsx","Excel (*.xlsx)")
+        if path:
+            try:
+                result=export_sales(path,day)
+                QtWidgets.QMessageBox.information(self,"تم",
+                    f"تم تصدير {result['count']} عملية بإجمالي {result['total']:,.2f} جنيه.")
+            except Exception as e:QtWidgets.QMessageBox.critical(self,"خطأ",str(e))
 
     def refresh_table(self):
         cat=self.category_filter.currentData() if hasattr(self,"category_filter") else None
@@ -297,8 +486,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def search_products(self): self.refresh_table()
 
     def focus_first_result(self):
-        if self.table.rowCount():
-            self.table.selectRow(0); self.show_selected()
+        if not self.table.rowCount(): return
+        self.table.selectRow(0); self.show_selected()
+        # Scanned barcode (or exact SKU) jumps straight to the confirm dialog.
+        term=self.search.text().strip()
+        if term:
+            p=self.products.get(int(self.table.item(0,0).text()))
+            if p and term in (p.barcode,p.sku): self.sell_product(p.id)
 
     def selected_ids(self):
         return [int(self.table.item(i.row(),0).text()) for i in self.table.selectionModel().selectedRows()]
@@ -318,6 +512,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.product_name.setText(p.name)
         self.product_details.setText(f"Barcode: {p.barcode or '-'}   |   SKU: {p.sku or '-'}   |   المخزون: {p.quantity:g} {p.unit}")
         self.price_big.setText(f"{p.sale_price:,.2f} جنيه")
+        self.sell_btn.setEnabled(True)
         self.history_product.setText(str(pid))
         self.refresh_history()
         self.tabs.setCurrentWidget(self.dashboard)
@@ -351,7 +546,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def refresh_categories_table(self):
         cats=self.categories.all(); self.category_table.setRowCount(len(cats))
-        with SessionLocal() as s:
+        with dbconn.SessionLocal() as s:
             counts=dict(s.execute(select(Product.category_id, func.count(Product.id)).group_by(Product.category_id)).all())
         for r,c in enumerate(cats):
             vals=[c.id,c.name,counts.get(c.id,0)]
@@ -435,6 +630,24 @@ class MainWindow(QtWidgets.QMainWindow):
         if QtWidgets.QMessageBox.question(self,"تأكيد","سيتم حذف المنتج/المنتجات المحددة. متابعة؟")!=QtWidgets.QMessageBox.Yes:return
         try:
             for pid in self.selected_ids():self.products.delete(pid)
+            self.refresh_all()
+        except Exception as e:QtWidgets.QMessageBox.critical(self,"خطأ",str(e))
+
+    def delete_all_products(self):
+        count=self.products.stats()["products"]
+        if count==0:
+            QtWidgets.QMessageBox.information(self,"لا يوجد شيء", "لا توجد منتجات للحذف.")
+            return
+        confirm=QtWidgets.QMessageBox.warning(
+            self,"تأكيد الحذف",
+            f"سيتم حذف جميع المنتجات ({count} منتج) نهائيًا،\n"
+            "بما في ذلك سجل الأسعار وحركات المخزون المرتبطة بها.\n\n"
+            "لا يمكن التراجع عن هذه العملية. متابعة؟",
+            QtWidgets.QMessageBox.Yes|QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No)
+        if confirm!=QtWidgets.QMessageBox.Yes:return
+        try:
+            deleted=self.products.delete_all()
+            QtWidgets.QMessageBox.information(self,"تم",f"تم حذف {deleted} منتج.")
             self.refresh_all()
         except Exception as e:QtWidgets.QMessageBox.critical(self,"خطأ",str(e))
 
@@ -542,4 +755,37 @@ class ProductEditDialog(QtWidgets.QDialog):
                     "unit":self.w["الوحدة"].text() or "قطعة","min_stock":dec("الحد الأدنى"),
                     "notes":self.w["ملاحظات"].text() or None,"category_id":self.cat.currentData()}
         except InvalidOperation as e:raise ValueError("أحد الحقول الرقمية غير صالح.") from e
+
+class SaleDialog(QtWidgets.QDialog):
+    def __init__(self,product,parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("تسجيل بيع")
+        self.setMinimumWidth(420)
+        available=Decimal(str(product.quantity))
+        form=QtWidgets.QFormLayout(self)
+        name=QtWidgets.QLabel(f"{product.name}  —  المتاح: {available:g} {product.unit}")
+        name.setStyleSheet("font-weight:700;")
+        self.qty_spin=QtWidgets.QDoubleSpinBox(); self.qty_spin.setDecimals(3)
+        self.qty_spin.setRange(0.001,999_999.999); self.qty_spin.setValue(min(1.0,float(available)))
+        self.price_spin=QtWidgets.QDoubleSpinBox(); self.price_spin.setDecimals(2)
+        self.price_spin.setRange(0,99_999_999.99); self.price_spin.setValue(float(product.sale_price))
+        self.total_lbl=QtWidgets.QLabel("—"); self.total_lbl.setObjectName("priceBig")
+        form.addRow("المنتج:",name)
+        form.addRow("الكمية:",self.qty_spin)
+        form.addRow("سعر الوحدة:",self.price_spin)
+        form.addRow("الإجمالي:",self.total_lbl)
+        bb=QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok|QtWidgets.QDialogButtonBox.Cancel)
+        bb.button(QtWidgets.QDialogButtonBox.Ok).setText("تأكيد البيع")
+        bb.button(QtWidgets.QDialogButtonBox.Cancel).setText("إلغاء")
+        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
+        form.addRow(bb)
+        self.qty_spin.valueChanged.connect(self._update_total)
+        self.price_spin.valueChanged.connect(self._update_total)
+        self._update_total()
+        self.qty_spin.selectAll(); self.qty_spin.setFocus()
+    def _update_total(self):
+        self.total_lbl.setText(f"{self.total():,.2f} جنيه")
+    def quantity(self): return Decimal(str(self.qty_spin.value()))
+    def price(self): return Decimal(str(self.price_spin.value()))
+    def total(self): return (self.quantity()*self.price()).quantize(Decimal("0.01"))
 
