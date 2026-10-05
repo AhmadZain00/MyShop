@@ -1,26 +1,11 @@
-
-from pathlib import Path
 import logging
 import os
 import sys
 from logging.handlers import RotatingFileHandler
 
-APP_NAME = "MyShop"
+from app.config import APP_NAME, data_root, base_dir
 
-def app_root() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parents[2]
-
-def data_root() -> Path:
-    portable = app_root() / "portable.flag"
-    if portable.exists():
-        return app_root() / "data"
-    local = os.environ.get("LOCALAPPDATA")
-    base = Path(local) if local else Path.home() / "AppData" / "Local"
-    return base / APP_NAME
-
-def logs_root() -> Path:
+def logs_root():
     p = data_root() / "logs"
     p.mkdir(parents=True, exist_ok=True)
     return p
@@ -43,7 +28,8 @@ def configure_logging() -> logging.Logger:
     return logger
 
 def production_checks():
-    root = app_root()
+    """Runtime diagnostics for scripts/validate_production.py and support."""
+    root = base_dir()
     data = data_root()
     data.mkdir(parents=True, exist_ok=True)
     return {
