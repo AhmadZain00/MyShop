@@ -3,8 +3,8 @@ import sys
 import os
 
 APP_NAME = "MyShop"
-APP_VERSION = "1.1.0"
-SCHEMA_VERSION = 1
+APP_VERSION = "1.2.0"
+SCHEMA_VERSION = 2
 
 def base_dir() -> Path:
     if getattr(sys, "frozen", False):

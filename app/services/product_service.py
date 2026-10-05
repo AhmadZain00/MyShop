@@ -1,13 +1,13 @@
 from decimal import Decimal
-from sqlalchemy import select, or_, func, desc
+from sqlalchemy import select, or_, func, desc, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
-from app.database.connection import SessionLocal
+from app.database import connection as dbconn
 from app.database.models import Product, Category, PriceHistory, StockMovement
 
 class ProductService:
     def search(self, term="", category_id=None, low_stock=False, limit=500):
-        with SessionLocal() as s:
+        with dbconn.SessionLocal() as s:
             stmt = select(Product).options(joinedload(Product.category)).order_by(Product.name).limit(limit)
             conditions = []
             term = (term or "").strip()
@@ -24,11 +24,11 @@ class ProductService:
             return list(s.scalars(stmt))
 
     def get(self, product_id):
-        with SessionLocal() as s:
+        with dbconn.SessionLocal() as s:
             return s.get(Product, product_id)
 
     def add(self, data, user_id=None):
-        with SessionLocal.begin() as s:
+        with dbconn.SessionLocal.begin() as s:
             p = Product(**data)
             s.add(p)
             try:
@@ -42,7 +42,7 @@ class ProductService:
             return p.id
 
     def update(self, product_id, data, user_id=None):
-        with SessionLocal.begin() as s:
+        with dbconn.SessionLocal.begin() as s:
             p = s.get(Product, product_id)
             if not p:
                 raise ValueError("المنتج غير موجود.")
@@ -66,13 +66,19 @@ class ProductService:
                 raise ValueError("Barcode أو SKU موجود بالفعل.") from exc
 
     def delete(self, product_id):
-        with SessionLocal.begin() as s:
+        with dbconn.SessionLocal.begin() as s:
             p = s.get(Product, product_id)
             if p:
                 s.delete(p)
 
+    def delete_all(self):
+        """Delete every product in one transaction (DB cascades clear history)."""
+        with dbconn.SessionLocal.begin() as s:
+            result = s.execute(delete(Product))
+            return result.rowcount
+
     def bulk_price(self, product_ids, percent, user_id):
-        with SessionLocal.begin() as s:
+        with dbconn.SessionLocal.begin() as s:
             for pid in product_ids:
                 p = s.get(Product, pid)
                 if not p:
@@ -84,11 +90,11 @@ class ProductService:
                                    change_percent=Decimal(str(percent)), changed_by=user_id))
 
     def low_stock_count(self):
-        with SessionLocal() as s:
+        with dbconn.SessionLocal() as s:
             return s.scalar(select(func.count(Product.id)).where(Product.quantity <= Product.min_stock)) or 0
 
     def stats(self):
-        with SessionLocal() as s:
+        with dbconn.SessionLocal() as s:
             return {
                 "products": s.scalar(select(func.count(Product.id))) or 0,
                 "categories": s.scalar(select(func.count(Category.id))) or 0,
@@ -96,23 +102,23 @@ class ProductService:
             }
 
     def recent_products(self, limit=8):
-        with SessionLocal() as s:
+        with dbconn.SessionLocal() as s:
             return list(s.scalars(select(Product).options(joinedload(Product.category)).order_by(desc(Product.updated_at)).limit(limit)))
 
     def recent_price_changes(self, limit=8):
-        with SessionLocal() as s:
+        with dbconn.SessionLocal() as s:
             return list(s.scalars(select(PriceHistory).options(joinedload(PriceHistory.product)).order_by(desc(PriceHistory.changed_at)).limit(limit)))
 
 class CategoryService:
     def all(self):
-        with SessionLocal() as s:
+        with dbconn.SessionLocal() as s:
             return list(s.scalars(select(Category).order_by(Category.name)))
 
     def add(self, name):
         name = name.strip()
         if not name:
             raise ValueError("اسم التصنيف مطلوب.")
-        with SessionLocal.begin() as s:
+        with dbconn.SessionLocal.begin() as s:
             if s.scalar(select(Category).where(Category.name == name)):
                 raise ValueError("التصنيف موجود بالفعل.")
             s.add(Category(name=name))
@@ -121,7 +127,7 @@ class CategoryService:
         name = name.strip()
         if not name:
             raise ValueError("اسم التصنيف مطلوب.")
-        with SessionLocal.begin() as s:
+        with dbconn.SessionLocal.begin() as s:
             c = s.get(Category, category_id)
             if not c:
                 raise ValueError("التصنيف غير موجود.")
@@ -131,7 +137,7 @@ class CategoryService:
             c.name = name
 
     def delete(self, category_id):
-        with SessionLocal.begin() as s:
+        with dbconn.SessionLocal.begin() as s:
             c = s.get(Category, category_id)
             if not c:
                 return
@@ -141,13 +147,13 @@ class CategoryService:
 
 class HistoryService:
     def for_product(self, product_id, limit=100):
-        with SessionLocal() as s:
+        with dbconn.SessionLocal() as s:
             return list(s.scalars(select(PriceHistory).options(joinedload(PriceHistory.product))
                                   .where(PriceHistory.product_id == product_id)
                                   .order_by(desc(PriceHistory.changed_at)).limit(limit)))
 
     def stock_for_product(self, product_id, limit=100):
-        with SessionLocal() as s:
+        with dbconn.SessionLocal() as s:
             return list(s.scalars(select(StockMovement)
                                   .where(StockMovement.product_id == product_id)
                                   .order_by(desc(StockMovement.changed_at)).limit(limit)))

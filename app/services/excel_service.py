@@ -1,10 +1,13 @@
 from decimal import Decimal, InvalidOperation
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment
-from app.database.connection import SessionLocal
-from app.database.models import Product, Category, PriceHistory, StockMovement
+from app.database import connection as dbconn
+from app.database.models import Product, Category, PriceHistory, StockMovement, Sale, User
 from sqlalchemy import select
+from sqlalchemy.orm import joinedload
+from app.services.sales_service import UTC_OFFSET_HOURS
 
 HEADERS = ["اسم المنتج","Barcode","SKU","التصنيف","الماركة","سعر الشراء","سعر البيع","الكمية","الوحدة","الحد الأدنى","ملاحظات"]
 
@@ -48,7 +51,7 @@ def export_products(path):
     ws = wb.active
     ws.title = "products"
     ws.append(HEADERS)
-    with SessionLocal() as s:
+    with dbconn.SessionLocal() as s:
         rows = s.scalars(select(Product).order_by(Product.name)).all()
         for p in rows:
             ws.append([p.name,p.barcode,p.sku,p.category.name if p.category else "",
@@ -73,7 +76,7 @@ def import_products(path, mode="update", progress=None, cancel_check=None):
             raise ValueError("عناوين الأعمدة غير مطابقة لنموذج MyShop.")
         total = max(0, ws.max_row - 1)
         result = {"added":0,"updated":0,"failed":0,"skipped":0,"errors":[]}
-        with SessionLocal() as s:
+        with dbconn.SessionLocal() as s:
             with s.begin():
                 categories = {c.name: c for c in s.scalars(select(Category)).all()}
                 for row_number, row in enumerate(rows, start=2):
@@ -147,4 +150,45 @@ def export_errors(path, errors):
     ws.append(["رقم الصف","الخطأ"] + HEADERS)
     for e in errors:
         ws.append([e["row"], e["error"]] + e["data"])
+
+
+SALE_HEADERS = ["التاريخ","الوقت","المنتج","الكمية","سعر الوحدة","الإجمالي","الكاشير"]
+
+
+def export_sales(path, day=None):
+    """Export one local day's sales report to Excel (defaults to today)."""
+    day = day or date.today()
+    start_local = datetime(day.year, day.month, day.day)
+    start = start_local - timedelta(hours=UTC_OFFSET_HOURS)
+    end = start + timedelta(days=1)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "sales"
+    ws.append(SALE_HEADERS)
+    for c in ws[1]:
+        c.font = Font(bold=True)
+        c.alignment = Alignment(horizontal="center")
+    total = Decimal("0")
+    with dbconn.SessionLocal() as s:
+        rows = s.execute(
+            select(Sale, User.username)
+            .options(joinedload(Sale.product))
+            .outerjoin(User, Sale.sold_by == User.id)
+            .where(Sale.sold_at >= start, Sale.sold_at < end)
+            .order_by(Sale.sold_at)
+        ).all()
+        for sale, username in rows:
+            local = sale.sold_at + timedelta(hours=UTC_OFFSET_HOURS)
+            total += Decimal(sale.total)
+            ws.append([local.strftime("%Y-%m-%d"), local.strftime("%H:%M:%S"),
+                       sale.product.name, float(sale.quantity), float(sale.unit_price),
+                       float(sale.total), username or "-"])
+    ws.append(["", "", "", "", "الإجمالي", float(total), ""])
+    for c in ws[ws.max_row]:
+        c.font = Font(bold=True)
+    for i, width in enumerate([14, 12, 30, 12, 14, 14, 16], 1):
+        ws.column_dimensions[chr(64+i)].width = width
+    ws.freeze_panes = "A2"
+    wb.save(path)
+    return {"count": len(rows), "total": total}
     wb.save(path)
